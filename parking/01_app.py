@@ -2,8 +2,6 @@ import streamlit as st
 import pandas as pd
 import folium
 from streamlit_folium import st_folium
-from geopy.geocoders import Nominatim
-from geopy.distance import geodesic
 
 st.set_page_config(
     page_title="서울시 공영주차장 안내",
@@ -11,7 +9,7 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🅿️ 서울시 공영주차장 안내")
+st.title("🅿️ 서울시 공영주차장 안내 서비스")
 
 uploaded_file = st.file_uploader(
     "서울시 공영주차장 CSV 업로드",
@@ -20,9 +18,10 @@ uploaded_file = st.file_uploader(
 
 if uploaded_file:
 
-    # -------------------------
+    # ===========================
     # CSV 읽기 (자동 인코딩)
-    # -------------------------
+    # ===========================
+
     df = None
 
     for enc in ["utf-8", "utf-8-sig", "cp949", "euc-kr"]:
@@ -35,143 +34,117 @@ if uploaded_file:
             pass
 
     if df is None:
-        st.error("CSV를 읽을 수 없습니다.")
+        st.error("CSV 파일을 읽을 수 없습니다.")
         st.stop()
 
-    # -------------------------
+    # ===========================
+    # 컬럼명 공백 제거
+    # ===========================
+
+    df.columns = df.columns.str.strip()
+
+    # ===========================
     # 좌표 없는 데이터 제거
-    # -------------------------
+    # ===========================
+
     df = df.dropna(subset=["위도", "경도"])
 
-    df["위도"] = pd.to_numeric(df["위도"])
-    df["경도"] = pd.to_numeric(df["경도"])
+    df["위도"] = pd.to_numeric(df["위도"], errors="coerce")
+    df["경도"] = pd.to_numeric(df["경도"], errors="coerce")
 
-    st.subheader("데이터 미리보기")
+    df = df.dropna(subset=["위도", "경도"])
+
+    st.subheader("📋 데이터")
+
     st.dataframe(df)
 
-    address = st.text_input(
-        "주소를 입력하세요",
-        placeholder="예) 서울특별시 강남구 테헤란로"
+    # ===========================
+    # 검색
+    # ===========================
+
+    keyword = st.text_input(
+        "주소 또는 주차장명을 입력하세요",
+        placeholder="예) 강남구, 송파구, 테헤란로"
     )
 
-    if address:
+    if keyword:
 
-        geolocator = Nominatim(user_agent="parking_app")
+        result = df[
+            df["주소"].astype(str).str.contains(keyword, case=False, na=False)
+            |
+            df["주차장명"].astype(str).str.contains(keyword, case=False, na=False)
+        ]
 
-        location = geolocator.geocode(address)
+    else:
 
-        if location is None:
-            st.error("주소를 찾을 수 없습니다.")
-            st.stop()
+        result = df
 
-        user_location = (
-            location.latitude,
-            location.longitude
-        )
+    if result.empty:
 
-        # -------------------------
-        # 거리 계산
-        # -------------------------
-        distances = []
+        st.warning("검색 결과가 없습니다.")
+        st.stop()
 
-        for _, row in df.iterrows():
+    st.success(f"{len(result)}개의 주차장을 찾았습니다.")
 
-            parking = (
-                row["위도"],
-                row["경도"]
-            )
+    # ===========================
+    # 지도
+    # ===========================
 
-            distances.append(
-                geodesic(
-                    user_location,
-                    parking
-                ).km
-            )
+    center_lat = result.iloc[0]["위도"]
+    center_lon = result.iloc[0]["경도"]
 
-        df["거리(km)"] = distances
+    m = folium.Map(
+        location=[center_lat, center_lon],
+        zoom_start=13
+    )
 
-        nearest = df.sort_values("거리(km)").iloc[0]
+    for _, row in result.iterrows():
 
-        st.subheader("가장 가까운 공영주차장")
-
-        c1, c2 = st.columns(2)
-
-        with c1:
-
-            st.metric(
-                "주차장",
-                nearest["주차장명"]
-            )
-
-            st.write("📍", nearest["주소"])
-
-            st.write(
-                f"💰 기본요금 : {nearest['기본 주차 요금']}원"
-            )
-
-            st.write(
-                f"⏰ 기본시간 : {nearest['기본 주차 시간(분 단위)']}분"
-            )
-
-            if pd.notna(nearest["추가 단위 요금"]):
-                st.write(
-                    f"➕ 추가요금 : {nearest['추가 단위 요금']}원"
-                )
-
-            st.write(
-                f"📏 거리 : {nearest['거리(km)']:.2f} km"
-            )
-
-        # -------------------------
-        # 지도
-        # -------------------------
-
-        m = folium.Map(
-            location=user_location,
-            zoom_start=13
-        )
+        popup = f"""
+        <b>{row['주차장명']}</b><br>
+        주소 : {row['주소']}<br>
+        기본요금 : {row.get('기본 주차 요금','-')}<br>
+        기본시간 : {row.get('기본 주차 시간(분 단위)','-')}분<br>
+        추가요금 : {row.get('추가 단위 요금','-')}<br>
+        """
 
         folium.Marker(
-            user_location,
-            tooltip="검색 위치",
-            icon=folium.Icon(color="red")
+            [row["위도"], row["경도"]],
+            tooltip=row["주차장명"],
+            popup=popup,
+            icon=folium.Icon(color="blue", icon="info-sign")
         ).add_to(m)
 
-        for _, row in df.iterrows():
+    st.subheader("🗺️ 공영주차장 위치")
 
-            popup = f"""
-            <b>{row['주차장명']}</b><br>
-            주소 : {row['주소']}<br>
-            기본요금 : {row['기본 주차 요금']}원<br>
-            기본시간 : {row['기본 주차 시간(분 단위)']}분<br>
-            추가요금 : {row['추가 단위 요금']}원
-            """
+    st_folium(
+        m,
+        width=1000,
+        height=600
+    )
 
-            folium.Marker(
-                [row["위도"], row["경도"]],
-                tooltip=row["주차장명"],
-                popup=popup,
-                icon=folium.Icon(color="blue")
-            ).add_to(m)
+    # ===========================
+    # 검색 결과
+    # ===========================
 
-        st.subheader("공영주차장 지도")
+    st.subheader("📍 검색 결과")
 
-        st_folium(
-            m,
-            width=1000,
-            height=650
-        )
+    show_columns = []
 
-        st.subheader("거리순 주차장")
+    for col in [
+        "주차장명",
+        "주소",
+        "기본 주차 요금",
+        "기본 주차 시간(분 단위)",
+        "추가 단위 요금",
+        "운영요일",
+        "평일 운영 시작시각",
+        "평일 운영 종료시각"
+    ]:
+        if col in result.columns:
+            show_columns.append(col)
 
-        st.dataframe(
-            df.sort_values("거리(km)")[
-                [
-                    "주차장명",
-                    "주소",
-                    "기본 주차 요금",
-                    "기본 주차 시간(분 단위)",
-                    "거리(km)"
-                ]
-            ]
-        )
+    st.dataframe(
+        result[show_columns],
+        use_container_width=True
+    )
