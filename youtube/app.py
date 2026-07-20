@@ -2,13 +2,42 @@ import streamlit as st
 from googleapiclient.discovery import build
 import pandas as pd
 import re
+import os
+import urllib.request
 import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
 from wordcloud import WordCloud
 from datetime import datetime
 
-# 한글 깨짐 방지를 위한 matplotlib 설정 (Streamlit Cloud 환경용)
-plt.rcParams['font.family'] = 'sans-serif'
-plt.rcParams['axes.unicode_minus'] = False
+# --- Streamlit Cloud용 한글 폰트 자동 설정 함수 ---
+@st.cache_resource
+def load_korean_font():
+    # 폰트를 저장할 경로와 이름 지정
+    font_dir = "fonts"
+    if not os.path.exists(font_dir):
+        os.makedirs(font_dir)
+        
+    font_path = os.path.join(font_dir, "NanumGothic.ttf")
+    
+    # 폰트 파일이 없으면 네이버 나눔고딕 라이선스 무료 배포 링크에서 직접 다운로드
+    if not os.path.exists(font_path):
+        url = "https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Regular.ttf"
+        try:
+            urllib.request.urlretrieve(url, font_path)
+        except Exception as e:
+            st.error(f"폰트 다운로드 실패: {e}")
+            return None
+            
+    return font_path
+
+# 폰트 경로 가져오기
+FONT_PATH = load_korean_font()
+
+# Matplotlib 한글 설정
+if FONT_PATH:
+    font_prop = fm.FontProperties(fname=FONT_PATH)
+    plt.rcParams['font.family'] = font_prop.get_name()
+    plt.rcParams['axes.unicode_minus'] = False
 
 # 1. 유튜브 영상 ID 추출 함수
 def extract_video_id(url):
@@ -29,7 +58,7 @@ def get_youtube_comments(api_key, video_id, max_count):
                 videoId=video_id,
                 maxResults=min(100, max_count - len(comments)),
                 pageToken=next_page_token,
-                order="relevance" # 유용한 댓글 순으로 먼저 가져옴
+                order="relevance"
             )
             response = request.execute()
             
@@ -59,9 +88,9 @@ st.set_page_config(page_title="유튜브 댓글 분석기", layout="wide")
 st.title("📊 YouTube 댓글 트렌드 분석기")
 st.markdown("유튜브 영상의 댓글을 수집하여 시간별 추이, 반응도, 핵심 키워드를 시각화합니다.")
 
-# 사이드바 설정 (API 키 및 옵션)
+# 사이드바 설정
 st.sidebar.header("⚙️ 설정")
-api_key = st.sidebar.text_input("YouTube API Key를 입력하세요", type="password", help="Google Cloud Console에서 발급받은 API 키가 필요합니다.")
+api_key = st.sidebar.text_input("YouTube API Key를 입력하세요", type="password")
 max_comments = st.sidebar.slider("수집할 댓글 개수", min_value=10, max_value=500, value=100, step=10)
 
 # 메인 입력창
@@ -73,11 +102,9 @@ if video_url:
     if not video_id:
         st.error("올바른 유튜브 URL 형식이 아닙니다. 링크를 다시 확인해주세요.")
     else:
-        # 영상 임베드 화면 표시
         st.subheader("📺 선택한 영상")
         st.video(video_url)
         
-        # 분석 시작 버튼
         if st.button("🚀 댓글 분석 시작"):
             if not api_key:
                 st.warning("사이드바에 YouTube API Key를 먼저 입력해주세요!")
@@ -88,53 +115,48 @@ if video_url:
                     if df is not None and not df.empty:
                         st.success(f"총 {len(df)}개의 댓글 수집 완료!")
                         
-                        # 화면을 두 구역으로 분할
                         col1, col2 = st.columns(2)
                         
                         # --- 1. 시간대별 댓글 작성 추이 ---
                         with col1:
                             st.subheader("📈 시간대별 댓글 작성 추이")
-                            # 날짜별로 정렬 및 카운트
                             df['just_date'] = df['date'].dt.date
                             date_counts = df.groupby('just_date').size().reset_index(name='댓글 수')
                             date_counts = date_counts.sort_values('just_date')
                             
-                            # 시각화
                             fig, ax = plt.subplots(figsize=(7, 4))
                             ax.plot(date_counts['just_date'], date_counts['댓글 수'], marker='o', color='#FF0000', linewidth=2)
-                            ax.set_xlabel('작성 날짜')
-                            ax.set_ylabel('댓글 수')
+                            ax.set_xlabel('작성 날짜', fontproperties=font_prop if FONT_PATH else None)
+                            ax.set_ylabel('댓글 수', fontproperties=font_prop if FONT_PATH else None)
                             plt.xticks(rotation=45)
                             plt.grid(True, linestyle='--', alpha=0.5)
                             st.pyplot(fig)
                         
-                        # --- 2. 댓글 반응도 (좋아요 상위 댓글) ---
+                        # --- 2. 댓글 반응도 ---
                         with col2:
                             st.subheader("🔥 가장 반응이 뜨거운 댓글 (좋아요 순)")
                             top_liked = df.nlargest(5, 'likes')[['text', 'likes']]
                             
                             for idx, row in top_liked.iterrows():
-                                # HTML 태그 제거 간단한 처리
                                 clean_text = re.sub('<[^<]+?>', '', row['text'])
                                 st.markdown(f"**👍 좋아요 {row['likes']}개**")
                                 st.caption(f"\"{clean_text}\"")
                                 st.markdown("---")
                         
                         # --- 3. 한글 워드클라우드 ---
-                        st.subheader("🔤 댓글 키워드 워드클라우드 (한글 중심)")
+                        st.subheader("🔤 댓글 키워드 워드클라우드")
                         
-                        # 한글 및 공백만 남기기 text 정제
                         all_text = " ".join(df['text'].values)
                         korean_text = re.sub(r'[^가-힣\s]', '', all_text)
                         
                         if len(korean_text.strip()) > 5:
-                            # Streamlit Cloud 환경에는 기본 나눔폰트 등이 없으므로 
-                            # 워드클라우드 내장 기본 폰트를 쓰되 무작위 에러 방지를 위해 기본 세팅 적용
+                            # 워드클라우드 생성 시 font_path 명시
                             wordcloud = WordCloud(
                                 width=800, 
                                 height=400, 
                                 background_color='white',
-                                min_font_size=10
+                                min_font_size=10,
+                                font_path=FONT_PATH if FONT_PATH else None
                             ).generate(korean_text)
                             
                             fig_wc, ax_wc = plt.subplots(figsize=(10, 5))
