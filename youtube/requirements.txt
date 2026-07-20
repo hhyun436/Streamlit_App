@@ -1,0 +1,6 @@
+# requirements.txt
+streamlit
+google-api-python-client
+pandas
+matplotlib
+wordcloud
