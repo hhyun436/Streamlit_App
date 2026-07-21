@@ -6,14 +6,6 @@ import streamlit as st
 import folium
 from streamlit_folium import st_folium
 
-# --- 1. GitHub 저장소의 config.py에서 API 키 불러오기 ---
-try:
-    from config import TOUR_API_KEY
-    API_KEY = TOUR_API_KEY
-except ImportError:
-    st.error("config.py 파일을 찾을 수 없거나 TOUR_API_KEY 설정이 잘못되었습니다.")
-    st.stop()
-
 # --- 페이지 설정 ---
 st.set_page_config(
     page_title="🎉 전국 축제 탐험대",
@@ -21,21 +13,50 @@ st.set_page_config(
     layout="wide"
 )
 
+# --- 1. API 키 불러오기 (config.py 시도 후 실패 시 사이드바 입력창 제공) ---
+API_KEY = None
 
-# --- API 데이터 로딩 함수 (캐싱 처리) ---
-@st.cache_data(ttl=3600)  # 1시간 동안 API 결과 캐싱
-def fetch_festivals(event_start_date: str):
+# 1-1. config.py 파일 읽기 시도
+try:
+    import config
+    API_KEY = getattr(config, "TOUR_API_KEY", None)
+except ImportError:
+    pass
+
+# 1-2. Streamlit Secrets 읽기 시도 (안전장치)
+if not API_KEY and "TOUR_API_KEY" in st.secrets:
+    API_KEY = st.secrets["TOUR_API_KEY"]
+
+# 사이드바 UI - API 키 상태 안내 및 수동 입력 옵션
+st.sidebar.header("🔑 API 설정")
+if not API_KEY:
+    st.sidebar.warning("`config.py`에서 API 키를 찾을 수 없습니다.")
+    user_api_key = st.sidebar.text_input("한국관광공사 API 키 직접 입력", type="password")
+    if user_api_key:
+        API_KEY = user_api_key
+else:
+    st.sidebar.success("API 키가 성공적으로 로드되었습니다!")
+
+
+# --- API 데이터 로딩 함수 ---
+@st.cache_data(ttl=3600)  # 1시간 캐싱
+def fetch_festivals(api_key: str, event_start_date: str):
     """한국관광공사 TourAPI 4.0 행사정보조회 Endpoint"""
+    if not api_key:
+        return pd.DataFrame()
+        
     url = "http://apis.data.go.kr/B551011/KorService1/searchFestival1"
+    
+    # 공공데이터포털 API 특성상 인코딩/디코딩 키 관련 이슈를 방지하기 위한 파라미터 세팅
     params = {
-        "serviceKey": API_KEY,
+        "serviceKey": api_key,
         "numOfRows": "100",
         "pageNo": "1",
         "MobileOS": "ETC",
         "MobileApp": "FestivalApp",
         "_type": "json",
         "listYN": "Y",
-        "arrange": "A",  # 대표이미지가 있는 정렬
+        "arrange": "A",
         "eventStartDate": event_start_date
     }
     
@@ -52,19 +73,30 @@ def fetch_festivals(event_start_date: str):
         df["mapy"] = pd.to_numeric(df["mapy"], errors="coerce")
         return df
     except Exception as e:
-        st.error(f"데이터를 불러오는 중 오류가 발생했습니다: {e}")
+        st.sidebar.error(f"API 요청 중 오류가 발생했습니다: {e}")
         return pd.DataFrame()
 
-# --- 데이터 준비 ---
-today_str = datetime.datetime.now().strftime("%Y%m%d")
-df_festivals = fetch_festivals(today_str)
 
-# --- UI 레이아웃 ---
+# --- 메인 화면 시작 ---
 st.title("🎉 대한민국 구석구석 축제 탐험대")
 st.caption("한국관광공사 Open API 기반 실시간 축제 검색 & 추천 웹앱")
 
+# API 키가 입력되지 않은 경우 안내 출력
+if not API_KEY:
+    st.info("👈 왼쪽 사이드바에 **한국관광공사 API 키**를 입력하거나, 깃허브 저장소에 `config.py` 파일을 만들어 주세요.")
+    
+    with st.expander("📌 config.py 파일 만들기 안내"):
+        st.code("""# 깃허브 저장소 루트에 config.py 파일을 만들고 아래 내용을 넣으세요.
+TOUR_API_KEY = "발급받은_API_KEY_입력"
+""", language="python")
+    st.stop()
+
+# --- 데이터 준비 ---
+today_str = datetime.datetime.now().strftime("%Y%m%d")
+df_festivals = fetch_festivals(API_KEY, today_str)
+
 if df_festivals.empty:
-    st.warning("현재 조회된 축제 정보가 없거나 API 키 설정(디코딩/인코딩 키 확인)에 문제가 있습니다.")
+    st.error("축제 데이터를 가져오지 못했습니다. API 키가 정확한지(인코딩/디코딩 여부) 확인해 주세요.")
     st.stop()
 
 # 탭 구성: [🗺️ 축제 지도 & D-Day] / [🎲 이번 주말 어디 가? 룰렛]
