@@ -13,23 +13,19 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- .streamlit/secrets.toml 파일에서 변수 읽어오기 ---
+# --- .streamlit/secrets.toml 에서 TOUR_API_KEY 가져오기 ---
 API_KEY = None
 
-# secrets.toml 파일 내 대표적인 변수명들을 순차적으로 확인
+# TOUR_API_KEY 키값 불러오기 시도
 if "TOUR_API_KEY" in st.secrets:
     API_KEY = st.secrets["TOUR_API_KEY"]
-elif "api_key" in st.secrets:
-    API_KEY = st.secrets["api_key"]
-elif "API_KEY" in st.secrets:
-    API_KEY = st.secrets["API_KEY"]
 
-# 사이드바 상태 표시 및 키 수동 입력 창
+# 사이드바 상태 안내 및 수동 입력 옵션
 st.sidebar.header("🔑 API 설정")
 if API_KEY:
-    st.sidebar.success("secrets.toml 파일에서 API 키를 불러왔습니다!")
+    st.sidebar.success("secrets.toml에서 TOUR_API_KEY를 성공적으로 로드했습니다!")
 else:
-    st.sidebar.warning("secrets.toml에서 API 키를 찾지 못했습니다.")
+    st.sidebar.warning("secrets.toml에서 TOUR_API_KEY를 찾을 수 없습니다.")
     user_api_key = st.sidebar.text_input("한국관광공사 API 키 직접 입력", type="password")
     if user_api_key:
         API_KEY = user_api_key
@@ -79,7 +75,7 @@ st.caption("한국관광공사 Open API 기반 실시간 축제 검색 & 추천 
 
 # API 키가 설정되지 않은 경우 안내
 if not API_KEY:
-    st.info("👈 왼쪽 사이드바에 API 키를 입력하거나, `.streamlit/secrets.toml` 파일 생성을 확인해 주세요.")
+    st.info("👈 왼쪽 사이드바에 API 키를 입력하거나, `.streamlit/secrets.toml` 파일에 `TOUR_API_KEY`를 설정해 주세요.")
     st.stop()
 
 # --- 데이터 준비 ---
