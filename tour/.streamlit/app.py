@@ -13,32 +13,34 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- 1. API 키 불러오기 (config.py 시도 후 실패 시 사이드바 입력창 제공) ---
+# --- API 키 불러오기 ---
 API_KEY = None
 
-# 1-1. config.py 파일 읽기 시도
-try:
-    import config
-    API_KEY = getattr(config, "TOUR_API_KEY", None)
-except ImportError:
-    pass
+# 1. secrets.toml 파일 내 여러 키 이름 패턴 체크
+if "secrets.toml" in st.secrets:
+    # secrets.toml = "API_KEY" 형식일 경우
+    if isinstance(st.secrets["secrets.toml"], str):
+        API_KEY = st.secrets["secrets.toml"]
+    # [secrets.toml] 섹션 아래 api_key 등의 하위 키가 있을 경우
+    elif isinstance(st.secrets["secrets.toml"], dict):
+        API_KEY = st.secrets["secrets.toml"].get("api_key") or st.secrets["secrets.toml"].get("TOUR_API_KEY")
 
-# 1-2. Streamlit Secrets 읽기 시도 (안전장치)
-if not API_KEY and "TOUR_API_KEY" in st.secrets:
-    API_KEY = st.secrets["TOUR_API_KEY"]
-
-# 사이드바 UI - API 키 상태 안내 및 수동 입력 옵션
-st.sidebar.header("🔑 API 설정")
+# 2. 일반적인 키 이름 예외 처리 (TOUR_API_KEY 또는 api_key)
 if not API_KEY:
-    st.sidebar.warning("`config.py`에서 API 키를 찾을 수 없습니다.")
+    API_KEY = st.secrets.get("TOUR_API_KEY") or st.secrets.get("api_key")
+
+# 사이드바 안내 및 예외 처리
+st.sidebar.header("🔑 API 설정")
+if API_KEY:
+    st.sidebar.success("`secrets.toml`에서 API 키를 성공적으로 로드했습니다!")
+else:
+    st.sidebar.warning("`secrets.toml`을 읽을 수 없습니다.")
     user_api_key = st.sidebar.text_input("한국관광공사 API 키 직접 입력", type="password")
     if user_api_key:
         API_KEY = user_api_key
-else:
-    st.sidebar.success("API 키가 성공적으로 로드되었습니다!")
 
 
-# --- API 데이터 로딩 함수 ---
+# --- API 데이터 로딩 함수 (캐싱 처리) ---
 @st.cache_data(ttl=3600)  # 1시간 캐싱
 def fetch_festivals(api_key: str, event_start_date: str):
     """한국관광공사 TourAPI 4.0 행사정보조회 Endpoint"""
@@ -47,7 +49,6 @@ def fetch_festivals(api_key: str, event_start_date: str):
         
     url = "http://apis.data.go.kr/B551011/KorService1/searchFestival1"
     
-    # 공공데이터포털 API 특성상 인코딩/디코딩 키 관련 이슈를 방지하기 위한 파라미터 세팅
     params = {
         "serviceKey": api_key,
         "numOfRows": "100",
@@ -81,14 +82,9 @@ def fetch_festivals(api_key: str, event_start_date: str):
 st.title("🎉 대한민국 구석구석 축제 탐험대")
 st.caption("한국관광공사 Open API 기반 실시간 축제 검색 & 추천 웹앱")
 
-# API 키가 입력되지 않은 경우 안내 출력
+# API 키 입력 안 되었을 때 안내
 if not API_KEY:
-    st.info("👈 왼쪽 사이드바에 **한국관광공사 API 키**를 입력하거나, 깃허브 저장소에 `config.py` 파일을 만들어 주세요.")
-    
-    with st.expander("📌 config.py 파일 만들기 안내"):
-        st.code("""# 깃허브 저장소 루트에 config.py 파일을 만들고 아래 내용을 넣으세요.
-TOUR_API_KEY = "발급받은_API_KEY_입력"
-""", language="python")
+    st.info("👈 왼쪽 사이드바에 API 키를 입력하거나, `.streamlit/secrets.toml` 설정 상태를 확인해 주세요.")
     st.stop()
 
 # --- 데이터 준비 ---
